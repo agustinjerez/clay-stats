@@ -1,0 +1,24 @@
+# Dataset YOLOv8-pose para keypoints de PISTA COMPLETA de tenis (vista de lado:
+# media pista IZQUIERDA y DERECHA, red vertical al centro).
+# 19 keypoints. Orden (igual que src/analysis/court.py: COURT_KEYPOINT_NAMES):
+#   0 left_baseline_top_doubles    1 left_baseline_top_singles
+#   2 left_baseline_bottom_singles 3 left_baseline_bottom_doubles
+#   4 left_service_top_singles     5 left_service_T  6 left_service_bottom_singles
+#   7 right_service_top_singles    8 right_service_T 9 right_service_bottom_singles
+#   10 right_baseline_top_doubles  11 right_baseline_top_singles
+#   12 right_baseline_bottom_singles 13 right_baseline_bottom_doubles
+#   14 net_top_doubles  15 net_top_singles  16 net_center
+#   17 net_bottom_singles  18 net_bottom_doubles   (red x 5 líneas longitudinales)
+
+path: ./dataset            # raíz del dataset (relativa a este archivo)
+train: images/train
+val: images/val
+
+# (nº de keypoints, dims). dim=3 -> (x, y, visibilidad)
+kpt_shape: [19, 3]
+
+# Flip horizontal: intercambia media izq <-> media der (bandas y red igual).
+flip_idx: [10, 11, 12, 13, 7, 8, 9, 4, 5, 6, 0, 1, 2, 3, 14, 15, 16, 17, 18]
+
+names:
+  0: court

@@ -1,0 +1,21 @@
+# Core
+numpy>=1.24
+opencv-python>=4.9
+scipy>=1.11
+PyYAML>=6.0
+tqdm>=4.66
+
+# Deep learning
+torch>=2.2
+torchvision>=0.17
+
+# Detección de jugadores (YOLO) y pelota (SAM3 vía SAM3SemanticPredictor)
+ultralytics>=8.3.237      # incluye SAM3SemanticPredictor
+
+# SAM3 (Meta): pesos en weights/sam3.pt (descargar de huggingface.co/facebook/sam3)
+# Requiere GPU. Login HF: huggingface-cli login
+huggingface_hub>=0.23
+
+# Visualización / export
+matplotlib>=3.8
+pillow>=10.0

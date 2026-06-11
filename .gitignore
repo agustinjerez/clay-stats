@@ -1,0 +1,39 @@
+# Entorno virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Pesos de modelos (grandes)
+weights/
+*.pt
+*.pth
+*.onnx
+
+# Vídeos
+*.mp4
+*.mov
+*.avi
+
+# Imágenes / frames pesados
+data/images/
+data/**/*.jpg
+data/**/*.png
+frame_*.jpg
+
+# Salidas y datasets de entrenamiento
+output/
+augmented/
+runs/
+training/court_yolo/dataset/
+
+# Repo de referencia clonado (tiene su propio .git)
+tennis_court_detector_git/
+
+# Sistema / IDE
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,146 @@
+# ============================================================
+#  Configuración del pipeline de inferencia de tenis (TFM)
+# ============================================================
+
+video:
+  # Análisis de UN solo vídeo.
+  input_path: "data/pano_260604_corto_saturado_1080.mp4"
+  # (opcional) dos cámaras sincronizadas: usa 'cameras' en vez de input_path
+  # cameras:
+  #   left:  "data/cam1_260604_corto_saturado_1080.mp4"
+  #   right: "data/cam2_260604_corto_saturado_1080.mp4"
+
+  # Procesar 1 de cada N frames (1 = todos). Con SAM3 deja 1 (frames consecutivos).
+  frame_stride: 1
+  # Limitar nº de frames (null = todo el vídeo)
+  max_frames: null
+
+models:
+  # Si true y tanto la pelota como los jugadores usan SAM3, se hace UNA sola
+  # pasada de SAM3 pidiendo ambos conceptos (pelota + jugador) a la vez,
+  # separando por etiqueta. Reduce el tiempo casi a la mitad.
+  sam3_combined: true
+
+  court:
+    # Detección de PISTA. En desarrollo: el pipeline aún NO la ejecuta.
+    enabled: true               # poner true cuando integres la pista
+    # Modo:
+    #   "fixed" -> cámara fija: calibras 1 imagen (tools/label_court_once.py)
+    #              y se reutilizan esos 13 keypoints para todo el vídeo.
+    #   "yolo"  -> YOLOv8-pose (entrenado con training/court_yolo/).
+    mode: "fixed"
+    # --- modo fixed ---
+    keypoints_json: "weights/court_keypoints.json"
+    # --- modo yolo ---
+    weights: "weights/court_pose.pt"
+    num_keypoints: 19
+    conf: 0.30
+    kpt_conf: 0.30
+    imgsz: 1280
+    device: "auto"
+
+  ball:
+    # Backend de detección de pelota:
+    #   "sam3" / "sam3_video" -> tracking NATIVO de vídeo (recomendado)
+    #   "sam3_image"          -> SAM3 frame a frame (notebook)
+    #   "tracknet"            -> TrackNetV2 (sin GPU/SAM3)
+    backend: "sam3"
+
+    # --- SAM3 (Meta, vía Ultralytics) ---
+    weights: "weights/sam3.pt"
+    device: "auto"                        # "auto"|"cuda"|"mps"|"cpu" (en Mac: mps/cpu)
+    half: null                            # null -> fp16 si CUDA; o true/false
+    # Resolución de inferencia de la PELOTA. Subirla (960/1280) mejora la
+    # detección de la pelota (objeto pequeño) a costa de más tiempo/VRAM.
+    # IMPORTANTE: para usar un imgsz distinto al de los jugadores, pon
+    # models.sam3_combined: false (en una sola pasada ambos comparten imgsz).
+    # Compara valores con: python tools/ball_imgsz_sweep.py
+    imgsz: 960                            # 960 detecta mucho mejor que 640
+    prompt: "small yellow tennis ball"    # prompt de texto para segmentar
+    score_threshold: 0.15
+    # Filtros geométricos de la caja candidata
+    min_box_px: 3
+    max_box_rel: 0.05                      # lado máx de caja = 5% del ancho del frame
+    aspect_ratio_range: [0.4, 2.5]
+    # Tracker por movimiento (asociación temporal)
+    max_ball_speed_px_s: 2500
+    pred_weight: 0.4
+    velocity_ema_alpha: 0.6
+    max_gap_frames: 8
+
+    # Refinado de la trayectoria (post-detección, mejora botes/golpes):
+    refine:
+      enabled: true
+      max_interp_gap: 8        # rellenar huecos de hasta N frames sin pelota
+      hampel_window: 7         # ventana del filtro de Hampel (outliers)
+      hampel_sigma: 3.0        # sensibilidad (menor = más agresivo)
+      max_speed_px_s: 4000     # velocidad máx px/s; por encima = falso positivo
+      smooth_window: 7         # ventana de suavizado Savitzky-Golay
+      smooth_poly: 2
+
+    # --- TrackNetV2 (alternativa sin GPU/SAM3) ---
+    # backend: "tracknet"
+    # weights: "weights/tracknet_v2.pth"
+    # in_frames: 3
+    # input_size: [288, 512]
+    # heatmap_thresh: 0.5
+
+  player:
+    # Backend de detección de jugadores: "sam3" (recomendado) | "yolo"
+    backend: "sam3"
+
+    # --- SAM3 (detecta bien al jugador del fondo, IDs estables) ---
+    weights: "weights/sam3.pt"
+    device: "auto"              # "auto" | "cuda" | "mps" | "cpu"
+    prompt: "tennis player"     # prompt de texto para SAM3
+    score_threshold: 0.30
+    imgsz: 640                  # los jugadores son grandes: 640 suele bastar
+    max_players: 2
+
+    # --- YOLO (alternativa) ---
+    # backend: "yolo"
+    # weights: "weights/yolov8x.pt"
+    # conf: 0.35
+    # iou: 0.5
+    # person_class_id: 0        # clase "person" en COCO
+
+court_model:
+  # Dimensiones reales de una pista de tenis (metros). Singles court.
+  length: 23.77                  # fondo a fondo
+  width: 8.23                    # ancho de individuales
+  doubles_width: 10.97
+  service_line_from_net: 6.40
+
+analysis:
+  bounce:
+    # Un bote = máximo local en la trayectoria vertical (imagen) de la pelota
+    min_prominence_px: 6         # prominencia mínima del pico
+    smooth_window: 5             # suavizado de la trayectoria (frames)
+  shot:
+    # Un golpe = reversión de la dirección HORIZONTAL de la pelota (eje X de la
+    # imagen). Se detecta sobre la X de imagen (no en metros), así NO depende de
+    # la homografía. mínimo de X -> jugador izquierda; máximo -> derecha.
+    prominence_frac: 0.12        # reversión mínima en X como fracción del recorrido horizontal
+    min_prominence_px: 25        # suelo de la reversión en píxeles
+    smooth_window: 7             # suavizado de la trayectoria X (frames)
+    min_frames_between_shots: 10 # refractario entre golpes (frames)
+    max_gap_frames: 12           # huecos de pelota mayores no generan golpes
+  rally:
+    # Fin de rally: hueco entre golpes mayor a este tiempo (segundos).
+    max_gap_s: 2.5
+  error:
+    # Bote fuera de los límites de pista -> error del último golpeador
+    out_margin_m: 0.10
+
+output:
+  json_path: "output/match_stats.json"
+  heatmap_path: "output/bounce_heatmap.png"
+  annotated_video: "output/match_annotated.mp4"   # vídeo con detecciones; null para desactivar
+  # Botes en el vídeo (requieren pista activa para tener homografía):
+  draw_bounces: true            # marca con una X cada bote (blanco=dentro, rojo=fuera)
+  bounce_hold_frames: 20        # frames que permanece visible cada marca de bote
+  draw_minimap: true            # mini-mapa cenital con los botes acumulados
+  minimap_width: 220            # ancho (px) del mini-mapa
+  # Metadatos para el servicio web
+  match_id: "match_0001"
+  upload_endpoint: null          # p.ej. "https://api.midominio.com/matches"
