@@ -247,26 +247,29 @@ class TennisPipeline:
             )
 
     def _filter_ball_roi(self, ball_obs, keypoints, w, h) -> int:
-        """Descarta detecciones de pelota fuera de la zona de pista (+ margen).
+        """Descarta detecciones de pelota fuera del POLÍGONO de la pista (+margen).
 
-        Mata falsos positivos lejos de la pista (vallas, fondo, reflejos)."""
+        Usa la envolvente convexa de los keypoints marcados (la pista en
+        perspectiva es un trapecio, no un rectángulo) y un margen pequeño. Mata
+        falsos positivos fuera de la pista (vallas, fondo, reflejos)."""
         roicfg = self.cfg["models"]["ball"].get("roi", {})
         if not roicfg.get("enabled", True) or keypoints is None:
             return 0
         import numpy as np
-        kp = keypoints[np.isfinite(keypoints).all(axis=1)]
+        import cv2
+        kp = keypoints[np.isfinite(keypoints).all(axis=1)].astype(np.float32)
         if len(kp) < 4:
             return 0
-        x0, y0 = kp[:, 0].min(), kp[:, 1].min()
-        x1, y1 = kp[:, 0].max(), kp[:, 1].max()
-        bw, bh = x1 - x0, y1 - y0
-        mx = roicfg.get("margin_x_frac", 0.08) * bw
-        mtop = roicfg.get("margin_top_frac", 0.6) * bh     # lobs: mucho margen arriba
-        mbot = roicfg.get("margin_bottom_frac", 0.15) * bh
-        x0 -= mx; x1 += mx; y0 -= mtop; y1 += mbot
+        hull = cv2.convexHull(kp)
+        bbox_h = float(kp[:, 1].max() - kp[:, 1].min())
+        # margen permitido fuera del polígono (px). Sube margin_frac para lobs.
+        margin_px = roicfg.get("margin_frac", 0.05) * bbox_h
         removed = 0
         for b in ball_obs:
-            if b.visible and b.x is not None and not (x0 <= b.x <= x1 and y0 <= b.y <= y1):
+            if not (b.visible and b.x is not None):
+                continue
+            dist = cv2.pointPolygonTest(hull, (float(b.x), float(b.y)), True)
+            if dist < -margin_px:           # fuera del polígono más allá del margen
                 b.visible = False
                 b.x = b.y = None
                 removed += 1
