@@ -146,7 +146,7 @@ analysis:
     max_gap_frames: 15           # huecos de pelota mayores no generan golpes
   rally:
     # Fin de rally: hueco entre golpes mayor a este tiempo (segundos).
-    max_gap_s: 2.5
+    max_gap_s: 4.0
   error:
     # Bote fuera de los límites de pista -> error del último golpeador
     out_margin_m: 0.10

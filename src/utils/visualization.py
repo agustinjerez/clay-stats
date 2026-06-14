@@ -136,12 +136,21 @@ def build_minimap(court_model, mm_len_px: int = 220, margin: int = 12):
 def draw_minimap(frame, mm, bounces, frame_idx):
     """Superpone el mini-mapa (esquina sup. der.) con los botes acumulados."""
     canvas = mm["base"].copy()
+    h_mm, w_mm = canvas.shape[:2]
+    n = 0
     for b in bounces:
         if b.frame > frame_idx:
             continue
-        p = mm["to_mm"](b.court_x, b.court_y)
+        if b.court_x is None or not np.isfinite(b.court_x) or not np.isfinite(b.court_y):
+            continue
+        x, y = mm["to_mm"](b.court_x, b.court_y)
+        x = int(min(max(x, 2), w_mm - 3))      # recortar al borde del mini-mapa
+        y = int(min(max(y, 2), h_mm - 3))
         col = C_BOUNCE_IN if b.inside else C_BOUNCE_OUT
-        cv2.circle(canvas, p, 3, col, -1, cv2.LINE_AA)
+        cv2.circle(canvas, (x, y), 3, col, -1, cv2.LINE_AA)
+        n += 1
+    cv2.putText(canvas, f"Botes: {n}", (6, h_mm - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
     H, W = frame.shape[:2]
     x0, y0 = W - mm["w"] - 10, 10
     if x0 < 0 or y0 + mm["h"] > H:
