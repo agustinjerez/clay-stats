@@ -99,11 +99,17 @@ class TennisPipeline:
                     H = cframe.homography
                     if cframe.valid and H is not None:
                         court_kps = {cframe.frame: cframe.keypoints}
+                        # Filtrar falsos positivos de pelota fuera de la pista
+                        self._filter_ball_roi(ball_obs, cframe.keypoints, meta[0], meta[1])
+                        self._refine_ball(ball_obs, fps)
                         self._project(ball_obs, players_by_frame, hc, H)
                         logger.info("[%s] pista fijada y proyectada a metros.", label)
                     else:
                         logger.warning("[%s] pista no válida; sin métricas.", label)
                         hc = None
+                        self._refine_ball(ball_obs, fps)
+            else:
+                self._refine_ball(ball_obs, fps)
 
             cameras_data[label] = {
                 "path": path, "fps": fps,
@@ -225,9 +231,10 @@ class TennisPipeline:
         else:
             ball_obs = ball_det.detect_video(path)
             players_by_frame = player_det.detect_video(path)
+        return ball_obs, players_by_frame, fps, meta
 
-        # Refinado de la trayectoria de la pelota (en píxeles)
-        rcfg = models["ball"].get("refine", {})
+    def _refine_ball(self, ball_obs, fps):
+        rcfg = self.cfg["models"]["ball"].get("refine", {})
         if rcfg.get("enabled", True):
             refine_ball_track(
                 ball_obs, fps,
@@ -238,7 +245,35 @@ class TennisPipeline:
                 smooth_window=rcfg.get("smooth_window", 7),
                 smooth_poly=rcfg.get("smooth_poly", 2),
             )
-        return ball_obs, players_by_frame, fps, meta
+
+    def _filter_ball_roi(self, ball_obs, keypoints, w, h) -> int:
+        """Descarta detecciones de pelota fuera de la zona de pista (+ margen).
+
+        Mata falsos positivos lejos de la pista (vallas, fondo, reflejos)."""
+        roicfg = self.cfg["models"]["ball"].get("roi", {})
+        if not roicfg.get("enabled", True) or keypoints is None:
+            return 0
+        import numpy as np
+        kp = keypoints[np.isfinite(keypoints).all(axis=1)]
+        if len(kp) < 4:
+            return 0
+        x0, y0 = kp[:, 0].min(), kp[:, 1].min()
+        x1, y1 = kp[:, 0].max(), kp[:, 1].max()
+        bw, bh = x1 - x0, y1 - y0
+        mx = roicfg.get("margin_x_frac", 0.08) * bw
+        mtop = roicfg.get("margin_top_frac", 0.6) * bh     # lobs: mucho margen arriba
+        mbot = roicfg.get("margin_bottom_frac", 0.15) * bh
+        x0 -= mx; x1 += mx; y0 -= mtop; y1 += mbot
+        removed = 0
+        for b in ball_obs:
+            if b.visible and b.x is not None and not (x0 <= b.x <= x1 and y0 <= b.y <= y1):
+                b.visible = False
+                b.x = b.y = None
+                removed += 1
+        if removed:
+            logger.info("ROI de pista: descartadas %d detecciones de pelota fuera de zona",
+                        removed)
+        return removed
 
     def _detect_court_once(self, court_det, path) -> CourtFrame:
         """Detecta la pista en el primer frame (cámara fija). Para el modo

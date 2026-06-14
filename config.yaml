@@ -68,6 +68,14 @@ models:
     velocity_ema_alpha: 0.6
     max_gap_frames: 8
 
+    # Zona de pista (ROI): descarta detecciones de pelota lejos de la pista
+    # (vallas, fondo, reflejos). Usa los keypoints de la pista + margen.
+    roi:
+      enabled: true
+      margin_x_frac: 0.08       # margen lateral (fracción del ancho de pista)
+      margin_top_frac: 0.6      # margen arriba (grande: globos/lobs van altos)
+      margin_bottom_frac: 0.15  # margen abajo
+
     # Refinado de la trayectoria (post-detección, mejora botes/golpes):
     refine:
       enabled: true
