@@ -73,6 +73,12 @@ models:
     velocity_ema_alpha: 0.6
     max_gap_frames: 12
 
+    # Recorte a la ZONA DE PISTA antes de SAM3 (cámara fija): la pelota ocupa
+    # más píxeles del imgsz sin subirlo -> mejor detección a igual coste.
+    crop_to_court:
+      enabled: true
+      margin_frac: 0.2        # margen alrededor de la pista (incluye a quien saca)
+
     # Zona de pista (ROI): descarta detecciones de pelota fuera del polígono de
     # la pista (envolvente de los keypoints marcados) + un margen pequeño.
     roi:
