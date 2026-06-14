@@ -79,6 +79,14 @@ models:
       enabled: true
       margin_frac: 0.2        # margen alrededor de la pista (incluye a quien saca)
 
+    # Tiling: parte el vídeo a lo ANCHO en n_tiles (con solapamiento), corre
+    # SAM3 en cada mitad -> la pelota ocupa el doble de píxeles a igual imgsz.
+    # Coste ~ n_tiles pasadas. Tiene prioridad sobre crop_to_court.
+    tile:
+      enabled: true
+      n_tiles: 2
+      overlap_frac: 0.08
+
     # Zona de pista (ROI): descarta detecciones de pelota fuera del polígono de
     # la pista (envolvente de los keypoints marcados) + un margen pequeño.
     roi:

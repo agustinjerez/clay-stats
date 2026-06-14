@@ -96,6 +96,7 @@ class TennisPipeline:
 
         cm = self.cfg["court_model"]
         crop_cfg = models["ball"].get("crop_to_court", {})
+        tile_cfg = models["ball"].get("tile", {})
         cameras_data: Dict[str, dict] = {}
         for label, cam in cameras.items():
             path = cam["video"]
@@ -110,19 +111,24 @@ class TennisPipeline:
                 court_det = build_court_detector(ccfg_cam)
                 cframe = self._detect_court_once(court_det, path)
 
-            # ---- Recorte a la zona de pista (más píxeles sobre la pelota) ----
-            det_path, ox, oy = path, 0, 0
-            if crop_cfg.get("enabled", False) and cframe is not None and cframe.valid:
-                det_path, ox, oy = self._crop_to_court(
-                    path, cframe.keypoints, meta, crop_cfg.get("margin_frac", 0.2), label)
-
             # ---- Detección de pelota + jugadores ----
-            with StepTimer(logger, f"[{label}] detección pelota + jugadores"
-                                    + (" (recorte de pista)" if (ox or oy) else "")):
-                ball_obs, players_by_frame = self._detect_source(
-                    det_path, combined, det, ball_det, player_det)
-            if ox or oy:                                  # reposicionar a frame completo
-                self._offset_detections(ball_obs, players_by_frame, ox, oy)
+            ox = oy = 0
+            if tile_cfg.get("enabled", False):
+                # Tiling: parte el vídeo a lo ancho -> pelota más grande a igual imgsz
+                with StepTimer(logger, f"[{label}] detección por tiles"):
+                    ball_obs, players_by_frame = self._detect_tiled(
+                        path, meta, combined, det, ball_det, player_det)
+            else:
+                det_path = path
+                if crop_cfg.get("enabled", False) and cframe is not None and cframe.valid:
+                    det_path, ox, oy = self._crop_to_court(
+                        path, cframe.keypoints, meta, crop_cfg.get("margin_frac", 0.2), label)
+                with StepTimer(logger, f"[{label}] detección pelota + jugadores"
+                                        + (" (recorte de pista)" if (ox or oy) else "")):
+                    ball_obs, players_by_frame = self._detect_source(
+                        det_path, combined, det, ball_det, player_det)
+                if ox or oy:                              # reposicionar a frame completo
+                    self._offset_detections(ball_obs, players_by_frame, ox, oy)
                 if det_path != path and os.path.exists(det_path):
                     os.remove(det_path)
 
@@ -387,36 +393,119 @@ class TennisPipeline:
         players_by_frame = player_det.detect_video(det_path)
         return ball_obs, players_by_frame
 
-    def _crop_to_court(self, path, keypoints, meta, margin_frac, label):
-        """Recorta el vídeo al rectángulo de la pista (+margen) con ffmpeg, para
-        que la pelota ocupe más píxeles. Devuelve (ruta_recorte, x0, y0)."""
+    def _crop_rect(self, path, x0, y0, cw, ch, name):
+        """Recorta `path` al rectángulo (x0,y0,cw,ch) con ffmpeg. Devuelve la
+        ruta del recorte o None si falla."""
         import subprocess
+        out_dir = os.path.dirname(self.cfg["output"]["json_path"]) or "."
+        os.makedirs(out_dir, exist_ok=True)
+        out = os.path.join(out_dir, f"_crop_{name}.mp4")
+        vf = f"crop=min(iw\\,{cw}):min(ih\\,{ch}):{x0}:{y0}"
+        last = ""
+        for codec in (["-c:v", "libx264", "-preset", "fast"],
+                      ["-c:v", "mpeg4", "-q:v", "3"]):
+            r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path,
+                                "-vf", vf, *codec, "-an", out],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                return out
+            last = r.stderr.strip()
+        logger.warning("recorte ffmpeg falló (%s): %s", name, last)
+        return None
+
+    def _crop_to_court(self, path, keypoints, meta, margin_frac, label):
+        """Recorta al rectángulo de la pista (+margen). Devuelve (ruta, x0, y0)."""
         import numpy as np
         W, H = meta[0], meta[1]
         kp = keypoints[np.isfinite(keypoints).all(axis=1)]
         if len(kp) < 4:
             return path, 0, 0
-        x0, y0 = float(kp[:, 0].min()), float(kp[:, 1].min())
-        x1, y1 = float(kp[:, 0].max()), float(kp[:, 1].max())
-        mx, my = margin_frac * (x1 - x0), margin_frac * (y1 - y0)
-        x0 = max(0, int(x0 - mx)); y0 = max(0, int(y0 - my))
-        x1 = min(W, int(x1 + mx)); y1 = min(H, int(y1 + my))
-        cw = (x1 - x0) // 2 * 2; ch = (y1 - y0) // 2 * 2     # pares para libx264
+        x0 = max(0, int(kp[:, 0].min() - margin_frac * np.ptp(kp[:, 0])))
+        y0 = max(0, int(kp[:, 1].min() - margin_frac * np.ptp(kp[:, 1])))
+        x1 = min(W, int(kp[:, 0].max() + margin_frac * np.ptp(kp[:, 0])))
+        y1 = min(H, int(kp[:, 1].max() + margin_frac * np.ptp(kp[:, 1])))
+        cw = (x1 - x0) // 2 * 2; ch = (y1 - y0) // 2 * 2
         if cw < 64 or ch < 64 or (cw >= W and ch >= H):
             return path, 0, 0
-        out = os.path.join(os.path.dirname(self.cfg["output"]["json_path"]) or ".",
-                           f"_crop_{label}.mp4")
-        cmd = ["ffmpeg", "-y", "-v", "error", "-i", path,
-               "-vf", f"crop={cw}:{ch}:{x0}:{y0}", "-c:v", "libx264",
-               "-preset", "fast", "-an", out]
-        try:
-            subprocess.run(cmd, check=True)
-            logger.info("[%s] recorte de pista %dx%d (de %dx%d) -> pelota mayor",
-                        label, cw, ch, W, H)
-            return out, x0, y0
-        except Exception as e:
-            logger.warning("[%s] no se pudo recortar (ffmpeg): %s", label, e)
+        out = self._crop_rect(path, x0, y0, cw, ch, label)
+        if out is None:
             return path, 0, 0
+        logger.info("[%s] recorte de pista %dx%d (de %dx%d)", label, cw, ch, W, H)
+        return out, x0, y0
+
+    def _detect_tiled(self, path, meta, combined, det, ball_det, player_det):
+        """Parte el vídeo en N tiles horizontales (con solapamiento), detecta en
+        cada uno (la pelota gana píxeles a igual imgsz) y fusiona: pelota = mejor
+        score por frame; jugadores = unión deduplicada."""
+        from collections import defaultdict
+        tcfg = self.cfg["models"]["ball"].get("tile", {})
+        n = max(2, int(tcfg.get("n_tiles", 2)))
+        overlap = float(tcfg.get("overlap_frac", 0.08))
+        W, H, nf = meta
+        tw = W / n
+        ow = int(overlap * tw)
+        ch = H // 2 * 2
+
+        best = {}                              # frame -> (score, BallObservation)
+        players = defaultdict(list)
+        for t in range(n):
+            x0 = max(0, int(round(t * tw - ow)))
+            x1 = min(W, int(round((t + 1) * tw + ow)))
+            cw = (x1 - x0) // 2 * 2
+            tile_path = self._crop_rect(path, x0, 0, cw, ch, f"tile{t}")
+            xoff = x0 if tile_path else 0
+            src = tile_path or path
+            tb, tp = self._detect_source(src, combined, det, ball_det, player_det)
+            if tile_path and os.path.exists(tile_path):
+                os.remove(tile_path)
+            # offset a frame completo
+            for b in tb:
+                if b.x is not None:
+                    b.x += xoff
+            for fr, pls in tp.items():
+                for pl in pls:
+                    a, bb, c, d = pl.bbox
+                    pl.bbox = (a + xoff, bb, c + xoff, d)
+                    pl.foot_x += xoff
+                players[fr].extend(pls)
+            # pelota: mejor score por frame
+            for b in tb:
+                if b.visible and b.x is not None:
+                    cur = best.get(b.frame)
+                    if cur is None or b.score > cur[0]:
+                        best[b.frame] = (b.score, b)
+            logger.info("tile %d/%d [x %d-%d]: pelota %d, jugadores %d",
+                        t + 1, n, x0, x1, sum(1 for b in tb if b.visible),
+                        sum(len(v) for v in tp.values()))
+
+        ball_obs = [best[f][1] if f in best else BallObservation(frame=f)
+                    for f in range(nf)]
+        self._dedupe_players(players)
+        return ball_obs, dict(players)
+
+    @staticmethod
+    def _dedupe_players(players_by_frame, min_dist=60.0):
+        """Quita jugadores duplicados (mismo jugador visto en dos tiles del
+        solapamiento): NMS por punto de pies, conservando el de mayor score."""
+        for fr, pls in players_by_frame.items():
+            pls.sort(key=lambda p: p.score, reverse=True)
+            kept = []
+            for p in pls:
+                if all((p.foot_x - q.foot_x) ** 2 + (p.foot_y - q.foot_y) ** 2
+                       > min_dist ** 2 for q in kept):
+                    kept.append(p)
+            players_by_frame[fr] = kept
+
+    @staticmethod
+    def _offset_detections(ball_obs, players_by_frame, ox, oy):
+        """Suma el offset del recorte para volver a coordenadas de frame completo."""
+        for b in ball_obs:
+            if b.x is not None:
+                b.x += ox; b.y += oy
+        for pls in players_by_frame.values():
+            for pl in pls:
+                x1, y1, x2, y2 = pl.bbox
+                pl.bbox = (x1 + ox, y1 + oy, x2 + ox, y2 + oy)
 
     @staticmethod
     def _offset_detections(ball_obs, players_by_frame, ox, oy):
