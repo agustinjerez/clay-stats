@@ -76,7 +76,7 @@ models:
     # Recorte a la ZONA DE PISTA antes de SAM3 (cámara fija): la pelota ocupa
     # más píxeles del imgsz sin subirlo -> mejor detección a igual coste.
     crop_to_court:
-      enabled: true
+      enabled: false
       margin_frac: 0.2        # margen alrededor de la pista (incluye a quien saca)
 
     # Tiling: parte el vídeo a lo ANCHO en n_tiles (con solapamiento), corre
