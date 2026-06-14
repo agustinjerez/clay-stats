@@ -60,9 +60,9 @@ models:
     # IMPORTANTE: para usar un imgsz distinto al de los jugadores, pon
     # models.sam3_combined: false (en una sola pasada ambos comparten imgsz).
     # Compara valores con: python tools/ball_imgsz_sweep.py
-    imgsz: 960                           # más resolución = pelota con más píxeles
+    imgsz: 1280                           # más resolución = pelota con más píxeles
     prompt: "small yellow tennis ball"    # prompt de texto para segmentar
-    score_threshold: 0.20                 # más sensible; el ROI filtra los FP
+    score_threshold: 0.10                 # más sensible; el ROI filtra los FP
     # Filtros geométricos de la caja candidata
     min_box_px: 2                         # la bola es diminuta: no descartes cajas pequeñas
     max_box_rel: 0.04                     # descarta blobs grandes (jugador, sombras)
@@ -83,7 +83,7 @@ models:
     # SAM3 en cada mitad -> la pelota ocupa el doble de píxeles a igual imgsz.
     # Coste ~ n_tiles pasadas. Tiene prioridad sobre crop_to_court.
     tile:
-      enabled: true
+      enabled: false
       n_tiles: 2
       overlap_frac: 0.08
 
@@ -147,13 +147,13 @@ court_model:
 analysis:
   bounce:
     # Un bote = máximo local en la trayectoria vertical (imagen) de la pelota
-    min_prominence_px: 15         # 5 baja un poco para captar botes suaves
+    min_prominence_px: 5         # 5 baja un poco para captar botes suaves
     smooth_window: 5             # más suavizado = menos ruido en la vertical
   shot:
     # Un golpe = reversión de la dirección HORIZONTAL de la pelota (eje X de la
     # imagen). Se detecta sobre la X de imagen (no en metros), así NO depende de
     # la homografía. mínimo de X -> jugador izquierda; máximo -> derecha.
-    prominence_frac: 0.15        # 0.10 reversión mínima en X (baja para golpes cortos)
+    prominence_frac: 0.05        # 0.10 reversión mínima en X (baja para golpes cortos)
     min_prominence_px: 30        # suelo en px (sube si cuenta micro-oscilaciones)
     smooth_window: 5             # 9 suaviza la X (mata jitter que crea golpes falsos)
     min_frames_between_shots: 8  # refractario entre golpes (frames)
