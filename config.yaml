@@ -4,7 +4,7 @@
 
 video:
   # --- UN solo vídeo ---
-  input_path: "data/pano_260604_corto_saturado_1080.mp4"
+  input_path: "data/pano_last_1080_3.mp4"
 
   # --- DOS cámaras (alternativa): comenta input_path y usa 'cameras' ---
   # cameras:
@@ -60,33 +60,32 @@ models:
     # IMPORTANTE: para usar un imgsz distinto al de los jugadores, pon
     # models.sam3_combined: false (en una sola pasada ambos comparten imgsz).
     # Compara valores con: python tools/ball_imgsz_sweep.py
-    imgsz: 960                            # 960 detecta mucho mejor que 640
+    imgsz: 960                           # más resolución = pelota con más píxeles
     prompt: "small yellow tennis ball"    # prompt de texto para segmentar
-    score_threshold: 0.15
+    score_threshold: 0.20                 # más sensible; el ROI filtra los FP
     # Filtros geométricos de la caja candidata
-    min_box_px: 3
-    max_box_rel: 0.05                      # lado máx de caja = 5% del ancho del frame
-    aspect_ratio_range: [0.4, 2.5]
+    min_box_px: 2                         # la bola es diminuta: no descartes cajas pequeñas
+    max_box_rel: 0.04                     # descarta blobs grandes (jugador, sombras)
+    aspect_ratio_range: [0.3, 3.0]        # permite la bola alargada por motion blur
     # Tracker por movimiento (asociación temporal)
-    max_ball_speed_px_s: 2500
-    pred_weight: 0.4
+    max_ball_speed_px_s: 3500
+    pred_weight: 0.5
     velocity_ema_alpha: 0.6
-    max_gap_frames: 8
+    max_gap_frames: 12
 
     # Zona de pista (ROI): descarta detecciones de pelota fuera del polígono de
     # la pista (envolvente de los keypoints marcados) + un margen pequeño.
     roi:
       enabled: true
-      margin_frac: 0.05         # margen fuera del polígono (fracción del alto de pista)
-                                # súbelo (0.2-0.4) si quieres permitir globos altos
+      margin_frac: 0.08         # margen fuera del polígono (algún globo bajo)
 
     # Refinado de la trayectoria (post-detección, mejora botes/golpes):
     refine:
       enabled: true
-      max_interp_gap: 8        # rellenar huecos de hasta N frames sin pelota
+      max_interp_gap: 12       # rellenar huecos más largos (hay muchos)
       hampel_window: 7         # ventana del filtro de Hampel (outliers)
-      hampel_sigma: 3.0        # sensibilidad (menor = más agresivo)
-      max_speed_px_s: 4000     # velocidad máx px/s; por encima = falso positivo
+      hampel_sigma: 2.5        # algo más agresivo quitando outliers
+      max_speed_px_s: 6000     # coherente con imgsz alto (no cortes la bola rápida)
       smooth_window: 7         # ventana de suavizado Savitzky-Golay
       smooth_poly: 2
 
@@ -134,17 +133,17 @@ court_model:
 analysis:
   bounce:
     # Un bote = máximo local en la trayectoria vertical (imagen) de la pelota
-    min_prominence_px: 6         # prominencia mínima del pico
-    smooth_window: 5             # suavizado de la trayectoria (frames)
+    min_prominence_px: 5         # baja un poco para captar botes suaves
+    smooth_window: 7             # más suavizado = menos ruido en la vertical
   shot:
     # Un golpe = reversión de la dirección HORIZONTAL de la pelota (eje X de la
     # imagen). Se detecta sobre la X de imagen (no en metros), así NO depende de
     # la homografía. mínimo de X -> jugador izquierda; máximo -> derecha.
-    prominence_frac: 0.12        # reversión mínima en X como fracción del recorrido horizontal
-    min_prominence_px: 25        # suelo de la reversión en píxeles
-    smooth_window: 7             # suavizado de la trayectoria X (frames)
-    min_frames_between_shots: 10 # refractario entre golpes (frames)
-    max_gap_frames: 12           # huecos de pelota mayores no generan golpes
+    prominence_frac: 0.10        # reversión mínima en X (baja para golpes cortos)
+    min_prominence_px: 30        # suelo en px (sube si cuenta micro-oscilaciones)
+    smooth_window: 9             # suaviza la X (mata jitter que crea golpes falsos)
+    min_frames_between_shots: 8  # refractario entre golpes (frames)
+    max_gap_frames: 15           # huecos de pelota mayores no generan golpes
   rally:
     # Fin de rally: hueco entre golpes mayor a este tiempo (segundos).
     max_gap_s: 2.5
