@@ -177,7 +177,8 @@ class TennisPipeline:
                         draw_minimap_opt=ocfg.get("draw_minimap", False),
                         court_model=data.get("hc"),
                         bounce_hold_frames=ocfg.get("bounce_hold_frames", 20),
-                        minimap_width=ocfg.get("minimap_width", 220),
+                        minimap_width=ocfg.get("minimap_width", 320),
+                        shots=data.get("shots"),
                     )
                 report["_artifacts"]["annotated_video"][label] = out_path
 
@@ -261,6 +262,7 @@ class TennisPipeline:
             bounces, shots, rallies, player_sides = self._analyze(
                 data["ball"], data["players"], hc, fps)
             data["bounces"] = bounces      # para dibujarlos en el vídeo
+            data["shots"] = shots          # para el contador del mini-mapa
             analyzed[label] = {"bounces": bounces, "shots": shots,
                                "players": data["players"], "fps": fps}
             player_ids = [player_sides["left"], player_sides["right"]]

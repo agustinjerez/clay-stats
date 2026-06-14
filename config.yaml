@@ -133,15 +133,15 @@ court_model:
 analysis:
   bounce:
     # Un bote = máximo local en la trayectoria vertical (imagen) de la pelota
-    min_prominence_px: 5         # baja un poco para captar botes suaves
+    min_prominence_px: 15         # 5 baja un poco para captar botes suaves
     smooth_window: 7             # más suavizado = menos ruido en la vertical
   shot:
     # Un golpe = reversión de la dirección HORIZONTAL de la pelota (eje X de la
     # imagen). Se detecta sobre la X de imagen (no en metros), así NO depende de
     # la homografía. mínimo de X -> jugador izquierda; máximo -> derecha.
-    prominence_frac: 0.10        # reversión mínima en X (baja para golpes cortos)
+    prominence_frac: 0.15        # 0.10 reversión mínima en X (baja para golpes cortos)
     min_prominence_px: 30        # suelo en px (sube si cuenta micro-oscilaciones)
-    smooth_window: 9             # suaviza la X (mata jitter que crea golpes falsos)
+    smooth_window: 5             # 9 suaviza la X (mata jitter que crea golpes falsos)
     min_frames_between_shots: 8  # refractario entre golpes (frames)
     max_gap_frames: 15           # huecos de pelota mayores no generan golpes
   rally:

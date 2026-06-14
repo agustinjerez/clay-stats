@@ -101,7 +101,7 @@ def draw_ball(frame: np.ndarray, ball: Optional[BallObservation], trail: deque) 
     return frame
 
 
-def build_minimap(court_model, mm_len_px: int = 220, margin: int = 12):
+def build_minimap(court_model, mm_len_px: int = 320, margin: int = 14):
     """Crea el mini-mapa cenital base de la pista y la función metro->minimap px.
 
     Orientación: eje largo (length) horizontal, ancho (width) vertical, igual que
@@ -133,8 +133,9 @@ def build_minimap(court_model, mm_len_px: int = 220, margin: int = 12):
     return {"base": base, "to_mm": to_mm, "w": w, "h": h}
 
 
-def draw_minimap(frame, mm, bounces, frame_idx):
-    """Superpone el mini-mapa (esquina sup. der.) con los botes acumulados."""
+def draw_minimap(frame, mm, bounces, frame_idx, shots=None):
+    """Superpone el mini-mapa (esquina sup. der.) con los botes acumulados y un
+    contador de botes y golpes hasta el frame actual."""
     canvas = mm["base"].copy()
     h_mm, w_mm = canvas.shape[:2]
     n = 0
@@ -147,10 +148,15 @@ def draw_minimap(frame, mm, bounces, frame_idx):
         x = int(min(max(x, 2), w_mm - 3))      # recortar al borde del mini-mapa
         y = int(min(max(y, 2), h_mm - 3))
         col = C_BOUNCE_IN if b.inside else C_BOUNCE_OUT
-        cv2.circle(canvas, (x, y), 3, col, -1, cv2.LINE_AA)
+        cv2.circle(canvas, (x, y), 4, col, -1, cv2.LINE_AA)
         n += 1
+    n_shots = sum(1 for s in (shots or []) if s.frame <= frame_idx)
+    # Contadores (banda inferior)
+    cv2.rectangle(canvas, (0, h_mm - 22), (w_mm, h_mm), (0, 0, 0), -1)
     cv2.putText(canvas, f"Botes: {n}", (6, h_mm - 6),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_BOUNCE_IN, 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"Golpes: {n_shots}", (w_mm // 2 + 4, h_mm - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1, cv2.LINE_AA)
     H, W = frame.shape[:2]
     x0, y0 = W - mm["w"] - 10, 10
     if x0 < 0 or y0 + mm["h"] > H:
@@ -189,7 +195,8 @@ def render_annotated_video(
     draw_minimap_opt: bool = False,
     court_model=None,
     bounce_hold_frames: int = 20,
-    minimap_width: int = 220,
+    minimap_width: int = 320,
+    shots: Optional[list] = None,
 ) -> str:
     """Re-lee el vídeo y escribe una copia anotada con todas las detecciones."""
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -234,7 +241,7 @@ def render_annotated_video(
         if draw_bounces and bounces:
             draw_bounce_markers(frame, bounces, frame_idx, bounce_hold_frames)
         if mm is not None:
-            draw_minimap(frame, mm, bounces, frame_idx)
+            draw_minimap(frame, mm, bounces, frame_idx, shots)
 
         _legend(frame)
         writer.write(frame)

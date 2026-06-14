@@ -56,50 +56,44 @@ class ShotDetector:
         players_by_frame: Dict[int, List[PlayerObservation]],
         player_sides: Optional[Dict[str, int]] = None,
     ) -> List[Shot]:
-        n = len(balls)
-        if n < 5:
+        # Trabajamos SOLO sobre las detecciones REALES de la pelota (no
+        # interpolamos), así la reversión se detecta a partir del último punto
+        # antes de que la pelota desaparezca junto al jugador y el primero al
+        # reaparecer: el hueco del golpe se "salta" de forma natural.
+        real = [b for b in balls if b.visible and b.x is not None]
+        if len(real) < 5:
+            logger.warning("ShotDetector: muy pocas detecciones de pelota (%d)", len(real))
             return []
 
-        # Trayectoria horizontal en IMAGEN (px)
-        x = np.array([b.x if (b.visible and b.x is not None) else np.nan for b in balls])
-        valid = np.isfinite(x)
-        if valid.sum() < 5:
-            logger.warning("ShotDetector: muy pocas detecciones de pelota (%d)",
-                           int(valid.sum()))
-            return []
+        xr = np.array([b.x for b in real], dtype=float)
+        frames = np.array([b.frame for b in real])
+        xs = smooth_series(xr, self.smooth_window)
+        xs = np.where(np.isfinite(xs), xs, xr)
 
-        idx = np.arange(n)
-        xi = np.interp(idx, idx[valid], x[valid])
-        xs = smooth_series(xi, self.smooth_window)
-        xs = np.where(np.isfinite(xs), xs, xi)
-
-        # Prominencia: una reversión real cubre buena parte del recorrido
-        # horizontal de la pelota. Se escala al rango observado (independiente
-        # de la resolución), con un suelo en píxeles.
+        # Prominencia de la reversión: fracción del recorrido horizontal + suelo px.
         span = float(np.nanmax(xs) - np.nanmin(xs))
         prom = max(self.min_prominence_px, self.prominence_frac * span)
 
-        maxima, _ = find_peaks(xs, prominence=prom, distance=self.refractory)   # -> derecha
-        minima, _ = find_peaks(-xs, prominence=prom, distance=self.refractory)  # -> izquierda
+        # find_peaks sobre los puntos reales: un máximo de X = la pelota iba a la
+        # derecha y se devuelve (golpe del jugador derecho); un mínimo = izquierdo.
+        maxima, _ = find_peaks(xs, prominence=prom)   # -> derecha
+        minima, _ = find_peaks(-xs, prominence=prom)  # -> izquierda
 
         if player_sides is None:
             player_sides = self.player_sides(players_by_frame, self.court)
 
-        events = [(int(p), "right") for p in maxima] + [(int(p), "left") for p in minima]
-        events.sort()
+        events = sorted([(int(k), "right") for k in maxima] +
+                        [(int(k), "left") for k in minima])
 
         shots: List[Shot] = []
         last_frame = -10_000
-        for p, side in events:
-            # Exigir una detección REAL cerca (no extremo de un hueco interpolado)
-            lo, hi = max(0, p - self.smooth_window), min(n, p + self.smooth_window + 1)
-            if not valid[lo:hi].any():
-                continue
-            b = balls[p]
+        for k, side in events:
+            b = real[k]
+            # Refractario en FRAMES (los puntos reales no son consecutivos)
             if b.frame - last_frame < self.refractory:
                 continue
             player_id = player_sides.get(side, self.court.player_for_side(side))
-            speed = self._speed_kmh(balls, p)
+            speed = self._speed_kmh(real, k)
             shots.append(Shot(
                 frame=b.frame, player_id=player_id,
                 court_x=b.court_x if b.court_x is not None else float("nan"),
@@ -108,7 +102,7 @@ class ShotDetector:
             ))
             last_frame = b.frame
             logger.debug("Golpe @frame %d | jugador %s (%s) | x_img=%.0f | v=%s km/h",
-                         b.frame, player_id, side, xs[p], speed)
+                         b.frame, player_id, side, xs[k], speed)
 
         per = {pid: sum(1 for s in shots if s.player_id == pid)
                for pid in set(s.player_id for s in shots)}
