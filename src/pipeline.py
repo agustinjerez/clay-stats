@@ -231,6 +231,29 @@ class TennisPipeline:
                 if proj:
                     pl.court_x, pl.court_y = proj
 
+    def _dump_track(self, label, ball_obs, bounces, shots):
+        """Vuelca la trayectoria de la pelota + eventos a CSV para inspección."""
+        import csv
+        import os
+        bframes = {b.frame for b in bounces}
+        sframes = {s.frame for s in shots}
+        out_dir = os.path.dirname(self.cfg["output"]["json_path"]) or "."
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"ball_track_{label}.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["frame", "x", "y", "visible", "interpolated",
+                        "court_x", "court_y", "is_bounce", "is_shot"])
+            for b in ball_obs:
+                w.writerow([b.frame,
+                            round(b.x, 1) if b.x is not None else "",
+                            round(b.y, 1) if b.y is not None else "",
+                            int(b.visible), int(getattr(b, "interpolated", False)),
+                            round(b.court_x, 2) if b.court_x is not None else "",
+                            round(b.court_y, 2) if b.court_y is not None else "",
+                            int(b.frame in bframes), int(b.frame in sframes)])
+        logger.info("Trayectoria volcada en: %s", path)
+
     def _analyze(self, ball_obs, players_by_frame, hc, fps):
         """Botes, golpes y rallies sobre una fuente con homografía válida."""
         acfg = self.cfg["analysis"]
@@ -263,6 +286,8 @@ class TennisPipeline:
                 data["ball"], data["players"], hc, fps)
             data["bounces"] = bounces      # para dibujarlos en el vídeo
             data["shots"] = shots          # para el contador del mini-mapa
+            if self.cfg["output"].get("dump_track", False):
+                self._dump_track(label, data["ball"], bounces, shots)
             analyzed[label] = {"bounces": bounces, "shots": shots,
                                "players": data["players"], "fps": fps}
             player_ids = [player_sides["left"], player_sides["right"]]

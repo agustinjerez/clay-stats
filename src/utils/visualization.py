@@ -44,15 +44,36 @@ def _draw_x(frame, c, color, r=8, t=2):
 
 
 def draw_bounce_markers(frame, bounces, frame_idx, hold):
-    """Marca con una X cada bote en su posición de imagen, visible `hold`
-    frames tras ocurrir (blanco=dentro, rojo=fuera)."""
+    """Dibuja los botes en su posición de imagen. Todos los pasados quedan como
+    punto pequeño persistente; el reciente (<=hold) como una X grande.
+    Blanco=dentro, rojo=fuera."""
     for b in bounces:
-        if b.img_x is None or not (0 <= frame_idx - b.frame <= hold):
+        if b.img_x is None or b.frame > frame_idx:
             continue
         c = (int(b.img_x), int(b.img_y))
         col = C_BOUNCE_IN if b.inside else C_BOUNCE_OUT
-        _draw_x(frame, c, col)
-        cv2.circle(frame, c, 11, col, 1, cv2.LINE_AA)
+        if frame_idx - b.frame <= hold:        # reciente -> X grande
+            _draw_x(frame, c, col)
+            cv2.circle(frame, c, 11, col, 1, cv2.LINE_AA)
+        else:                                  # pasado -> punto persistente
+            cv2.circle(frame, c, 4, col, -1, cv2.LINE_AA)
+    return frame
+
+
+def draw_shot_markers(frame, shots, ball_by_frame, frame_idx, hold):
+    """Marca cada golpe reciente (<=hold): aro en la pelota en el frame del golpe
+    + rótulo 'GOLPE J{n}'. Como los golpes no se pintaban, ahora se ven."""
+    recent = [s for s in shots if 0 <= frame_idx - s.frame <= hold]
+    for s in recent:
+        b = ball_by_frame.get(s.frame)
+        if b is not None and b.x is not None:
+            c = (int(b.x), int(b.y))
+            label = f"GOLPE J{s.player_id}"
+            if s.ball_speed_kmh:
+                label += f" {s.ball_speed_kmh:.0f} km/h"
+            cv2.circle(frame, c, 16, (0, 200, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, label, (c[0] + 18, c[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2, cv2.LINE_AA)
     return frame
 
 
@@ -150,12 +171,14 @@ def draw_minimap(frame, mm, bounces, frame_idx, shots=None):
         col = C_BOUNCE_IN if b.inside else C_BOUNCE_OUT
         cv2.circle(canvas, (x, y), 4, col, -1, cv2.LINE_AA)
         n += 1
-    n_shots = sum(1 for s in (shots or []) if s.frame <= frame_idx)
-    # Contadores (banda inferior)
-    cv2.rectangle(canvas, (0, h_mm - 22), (w_mm, h_mm), (0, 0, 0), -1)
-    cv2.putText(canvas, f"Botes: {n}", (6, h_mm - 6),
+    past = [s for s in (shots or []) if s.frame <= frame_idx]
+    j1 = sum(1 for s in past if s.player_id == 1)
+    j2 = sum(1 for s in past if s.player_id == 2)
+    # Contadores (banda inferior, 2 líneas)
+    cv2.rectangle(canvas, (0, h_mm - 38), (w_mm, h_mm), (0, 0, 0), -1)
+    cv2.putText(canvas, f"Botes: {n}", (6, h_mm - 23),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_BOUNCE_IN, 1, cv2.LINE_AA)
-    cv2.putText(canvas, f"Golpes: {n_shots}", (w_mm // 2 + 4, h_mm - 6),
+    cv2.putText(canvas, f"Golpes: {len(past)}  (J1:{j1}  J2:{j2})", (6, h_mm - 6),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1, cv2.LINE_AA)
     H, W = frame.shape[:2]
     x0, y0 = W - mm["w"] - 10, 10
@@ -240,6 +263,8 @@ def render_annotated_video(
 
         if draw_bounces and bounces:
             draw_bounce_markers(frame, bounces, frame_idx, bounce_hold_frames)
+        if shots:
+            draw_shot_markers(frame, shots, ball_by_frame, frame_idx, bounce_hold_frames)
         if mm is not None:
             draw_minimap(frame, mm, bounces, frame_idx, shots)
 

@@ -26,33 +26,31 @@ class BounceDetector:
         self.out_margin = out_margin_m
 
     def detect(self, balls: List[BallObservation]) -> List[Bounce]:
-        ys = np.array([b.y if b.visible and b.y is not None else np.nan for b in balls])
-        if np.isfinite(ys).sum() < 3:
+        # Trabajar SOLO con detecciones reales (incluye huecos cortos ya
+        # rellenados por el refinado). NO se interpola sobre huecos largos, así
+        # no se crean picos falsos por la línea recta de la interpolación.
+        real = [b for b in balls if b.visible and b.y is not None]
+        if len(real) < 3:
             return []
 
+        ys = np.array([b.y for b in real], dtype=float)
         ys_s = smooth_series(ys, self.smooth_window)
-        # Rellenar NaN por interpolación para find_peaks
-        valid = np.isfinite(ys_s)
-        idx = np.arange(len(ys_s))
-        ys_filled = np.interp(idx, idx[valid], ys_s[valid])
+        ys_s = np.where(np.isfinite(ys_s), ys_s, ys)
 
-        peaks, _ = find_peaks(ys_filled, prominence=self.min_prominence)
+        # Y crece hacia abajo: un bote = la pelota baja al máximo y vuelve a subir
+        peaks, _ = find_peaks(ys_s, prominence=self.min_prominence)
 
         bounces: List[Bounce] = []
-        for p in peaks:
-            b = balls[p]
+        for k in peaks:
+            b = real[k]
             if b.court_x is None or b.court_y is None:
                 continue
             inside = self.court.is_inside(b.court_x, b.court_y, self.out_margin)
             bounces.append(
                 Bounce(
-                    frame=b.frame,
-                    court_x=b.court_x,
-                    court_y=b.court_y,
-                    inside=inside,
-                    side=self.court.side_of(b.court_y),
-                    img_x=b.x,
-                    img_y=b.y,
+                    frame=b.frame, court_x=b.court_x, court_y=b.court_y,
+                    inside=inside, side=self.court.side_of(b.court_y),
+                    img_x=b.x, img_y=b.y,
                 )
             )
         return bounces
