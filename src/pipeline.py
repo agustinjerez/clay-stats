@@ -120,16 +120,19 @@ class TennisPipeline:
                     H = cframe.homography
                     if cframe.valid and H is not None:
                         court_kps = {cframe.frame: cframe.keypoints}
-                        # Filtrar falsos positivos de pelota fuera de la pista
+                        # Filtrar falsos positivos fuera de la pista
                         self._filter_ball_roi(ball_obs, cframe.keypoints, meta[0], meta[1])
+                        self._filter_player_roi(players_by_frame, cframe.keypoints)
                         self._refine_ball(ball_obs, fps)
                         self._project(ball_obs, players_by_frame, hc, H)
                         logger.info("[%s] pista fijada y proyectada a metros.", label)
                     else:
                         logger.warning("[%s] pista no válida; sin métricas.", label)
                         hc = None
+                        self._cap_players(players_by_frame)
                         self._refine_ball(ball_obs, fps)
             else:
+                self._cap_players(players_by_frame)
                 self._refine_ball(ball_obs, fps)
 
             cameras_data[label] = {
@@ -178,7 +181,40 @@ class TennisPipeline:
                     )
                 report["_artifacts"]["annotated_video"][label] = out_path
 
+            # Combinar las cámaras en un único vídeo lado a lado (izq | der)
+            if not single and ocfg.get("combine_cameras", True):
+                combined = self._combine_annotated(
+                    report["_artifacts"]["annotated_video"], ocfg["annotated_video"])
+                if combined:
+                    report["_artifacts"]["annotated_video"]["combined"] = combined
+
         return report
+
+    @staticmethod
+    def _combine_annotated(paths_by_label: dict, base_out: str) -> str:
+        """Une los vídeos anotados de las cámaras lado a lado (izq|der) en uno."""
+        import subprocess
+        # Orden: izquierda primero, derecha después.
+        order = sorted([k for k in paths_by_label if k != "combined"],
+                       key=lambda k: (0 if "left" in k.lower() or "izq" in k.lower()
+                                      else 1 if "right" in k.lower() or "der" in k.lower()
+                                      else 2, k))
+        vids = [paths_by_label[k] for k in order]
+        if len(vids) < 2:
+            return ""
+        out = base_out[:-4] + "_full.mp4" if base_out.endswith(".mp4") else base_out + "_full.mp4"
+        inputs = []
+        for v in vids:
+            inputs += ["-i", v]
+        cmd = ["ffmpeg", "-y", "-v", "error", *inputs,
+               "-filter_complex", f"hstack=inputs={len(vids)}", out]
+        try:
+            subprocess.run(cmd, check=True)
+            logger.info("Vídeo combinado (lado a lado) escrito en: %s", out)
+            return out
+        except Exception as e:
+            logger.warning("No se pudo combinar los vídeos (ffmpeg): %s", e)
+            return ""
 
     # ------------------------------------------------------------------
     def _project(self, ball_obs, players_by_frame, hc, H):
@@ -304,6 +340,47 @@ class TennisPipeline:
             ball_obs = ball_det.detect_video(path)
             players_by_frame = player_det.detect_video(path)
         return ball_obs, players_by_frame, fps, meta
+
+    def _cap_players(self, players_by_frame):
+        """Recorta a max_players por frame (mayor score). Sin filtro de zona."""
+        mp = self.cfg["models"]["player"].get("max_players", 2)
+        for fr, pls in players_by_frame.items():
+            if len(pls) > mp:
+                pls.sort(key=lambda p: p.score, reverse=True)
+                players_by_frame[fr] = pls[:mp]
+
+    def _filter_player_roi(self, players_by_frame, keypoints) -> int:
+        """Descarta jugadores cuyo punto de pies cae fuera del polígono de la
+        pista (+ margen para los que sacan tras la línea de fondo) y recorta a
+        max_players. Elimina espectadores/personas del fondo."""
+        pcfg = self.cfg["models"]["player"].get("roi", {})
+        mp = self.cfg["models"]["player"].get("max_players", 2)
+        if not pcfg.get("enabled", True) or keypoints is None:
+            self._cap_players(players_by_frame)
+            return 0
+        import numpy as np
+        import cv2
+        kp = keypoints[np.isfinite(keypoints).all(axis=1)].astype(np.float32)
+        if len(kp) < 4:
+            self._cap_players(players_by_frame)
+            return 0
+        hull = cv2.convexHull(kp)
+        bbox_h = float(kp[:, 1].max() - kp[:, 1].min())
+        margin_px = pcfg.get("margin_frac", 0.4) * bbox_h   # margen tras los fondos
+        removed = 0
+        for fr, pls in players_by_frame.items():
+            inside = []
+            for pl in pls:
+                d = cv2.pointPolygonTest(hull, (float(pl.foot_x), float(pl.foot_y)), True)
+                if d >= -margin_px:
+                    inside.append(pl)
+                else:
+                    removed += 1
+            inside.sort(key=lambda p: p.score, reverse=True)
+            players_by_frame[fr] = inside[:mp]
+        if removed:
+            logger.info("ROI jugadores: descartadas %d detecciones fuera de pista", removed)
+        return removed
 
     def _refine_ball(self, ball_obs, fps):
         rcfg = self.cfg["models"]["ball"].get("refine", {})

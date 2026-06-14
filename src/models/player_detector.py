@@ -50,6 +50,9 @@ class Sam3PlayerDetector:
         self.score_threshold = score_threshold
         self.imgsz = imgsz
         self.max_players = max_players
+        # Pool de candidatos antes del filtro de zona (el recorte final a
+        # max_players lo hace el pipeline tras descartar los de fuera de pista).
+        self.candidate_max = max(6, 3 * max_players)
         self.device = resolve_device(device)
         self.half = self.device.startswith("cuda") if half is None else half
         self._predictor = self._load(weights)
@@ -86,7 +89,7 @@ class Sam3PlayerDetector:
                 scores = r.boxes.conf.cpu().numpy()
                 ids = (r.boxes.id.cpu().numpy() if getattr(r.boxes, "id", None) is not None
                        else None)
-                obs = _obs_from_boxes(frame_idx, boxes, ids, scores, self.max_players)
+                obs = _obs_from_boxes(frame_idx, boxes, ids, scores, self.candidate_max)
             out[frame_idx] = obs
         n = sum(len(v) for v in out.values())
         logger.info("SAM3 jugadores: %d detecciones en %d frames (media %.2f/frame)",
@@ -120,6 +123,7 @@ class PlayerDetector:
         self.iou = iou
         self.person_class_id = person_class_id
         self.max_players = max_players
+        self.candidate_max = max(6, 3 * max_players)
 
     def detect_video(self, video_path: str) -> Dict[int, List[PlayerObservation]]:
         results = self.model.track(
@@ -134,7 +138,7 @@ class PlayerDetector:
                 boxes = r.boxes.xyxy.cpu().numpy()
                 scores = r.boxes.conf.cpu().numpy()
                 ids = (r.boxes.id.cpu().numpy() if r.boxes.id is not None else None)
-                obs = _obs_from_boxes(frame_idx, boxes, ids, scores, self.max_players)
+                obs = _obs_from_boxes(frame_idx, boxes, ids, scores, self.candidate_max)
             out[frame_idx] = obs
         return out
 

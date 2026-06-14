@@ -3,17 +3,17 @@
 # ============================================================
 
 video:
-  # --- DOS cámaras (cada una su mitad de pista, con SU calibración) ---
-  cameras:
-    left:
-      video: "data/cam1_260604_corto_saturado_1080.mp4"
-      keypoints_json: "weights/court_keypoints_cam1.json"
-    right:
-      video: "data/cam2_260604_corto_saturado_1080.mp4"
-      keypoints_json: "weights/court_keypoints_cam2.json"
+  # --- UN solo vídeo ---
+  input_path: "data/pano_260604_corto_saturado_1080.mp4"
 
-  # --- UN solo vídeo (alternativa): comenta 'cameras' y usa input_path ---
-  # input_path: "data/pano_260604_corto_saturado_1080.mp4"
+  # --- DOS cámaras (alternativa): comenta input_path y usa 'cameras' ---
+  # cameras:
+  #   left:
+  #     video: "data/cam1_260604_corto_saturado_1080.mp4"
+  #     keypoints_json: "weights/court_keypoints_cam1.json"
+  #   right:
+  #     video: "data/cam2_260604_corto_saturado_1080.mp4"
+  #     keypoints_json: "weights/court_keypoints_cam2.json"
 
   # Procesar 1 de cada N frames (1 = todos). Con SAM3 deja 1 (frames consecutivos).
   frame_stride: 1
@@ -109,6 +109,14 @@ models:
     imgsz: 640                  # los jugadores son grandes: 640 suele bastar
     max_players: 2
 
+    # Zona de pista (ROI): descarta jugadores cuyo punto de pies cae fuera del
+    # polígono de la pista (+margen tras los fondos). Elimina espectadores y
+    # personas del fondo. Requiere pista activa (court.enabled: true).
+    roi:
+      enabled: true
+      margin_frac: 0.4          # margen fuera del polígono (fracción del alto de pista)
+                                # para jugadores que sacan tras la línea de fondo
+
     # --- YOLO (alternativa) ---
     # backend: "yolo"
     # weights: "weights/yolov8x.pt"
@@ -153,6 +161,8 @@ output:
   bounce_hold_frames: 20        # frames que permanece visible cada marca de bote
   draw_minimap: true            # mini-mapa cenital con los botes acumulados
   minimap_width: 220            # ancho (px) del mini-mapa
+  # Con dos cámaras: unir los dos vídeos anotados lado a lado (izq|der) en uno
+  combine_cameras: true         # genera ..._full.mp4 (requiere ffmpeg)
   # Metadatos para el servicio web
   match_id: "match_0001"
   upload_endpoint: null          # p.ej. "https://api.midominio.com/matches"

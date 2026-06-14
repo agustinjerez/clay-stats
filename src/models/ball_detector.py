@@ -361,6 +361,7 @@ class Sam3CombinedDetector(_BallCandidateMixin):
         self.velocity_ema_alpha = velocity_ema_alpha
         self.max_gap_frames = max_gap_frames
         self.max_players = max_players
+        self.candidate_max = max(6, 3 * max_players)   # pool antes del filtro de zona
         self.device = resolve_device(device)
         self.half = self.device.startswith("cuda") if half is None else half
         self._predictor = self._load(weights)
@@ -445,7 +446,7 @@ class Sam3CombinedDetector(_BallCandidateMixin):
             if len(xyxy) and pmask.any():
                 pids = ids[pmask] if ids is not None else None
                 players_by_frame[frame_idx] = _obs_from_boxes(
-                    frame_idx, xyxy[pmask], pids, conf[pmask], self.max_players)
+                    frame_idx, xyxy[pmask], pids, conf[pmask], self.candidate_max)
             else:
                 players_by_frame[frame_idx] = []
 
