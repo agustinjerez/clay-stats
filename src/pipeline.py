@@ -40,15 +40,29 @@ class TennisPipeline:
         )
 
     # ------------------------------------------------------------------
-    def _cameras(self, vcfg: dict) -> Dict[str, str]:
-        """Devuelve {etiqueta: ruta} de las cámaras configuradas.
+    def _cameras(self, vcfg: dict) -> Dict[str, dict]:
+        """Devuelve {etiqueta: {video, keypoints_json}} de las cámaras.
 
-        Soporta `video.cameras: {near: ..., far: ...}` y, por compatibilidad,
-        un único `video.input_path` (etiqueta 'cam1')."""
+        Soporta:
+          video.input_path: ruta            (una cámara)
+          video.cameras:
+            left:  data/cam1.mp4            (cadena -> calibración global)
+            right:
+              video: data/cam2.mp4         (dict -> calibración propia)
+              keypoints_json: weights/court_keypoints_cam2.json
+        """
+        default_kp = self.cfg.get("models", {}).get("court", {}).get("keypoints_json")
         if vcfg.get("input_path"):
-            return {"video": vcfg["input_path"]}
+            return {"video": {"video": vcfg["input_path"], "keypoints_json": default_kp}}
         if vcfg.get("cameras"):
-            return dict(vcfg["cameras"])
+            out = {}
+            for label, val in vcfg["cameras"].items():
+                if isinstance(val, dict):
+                    out[label] = {"video": val["video"],
+                                  "keypoints_json": val.get("keypoints_json", default_kp)}
+                else:
+                    out[label] = {"video": val, "keypoints_json": default_kp}
+            return out
         raise ValueError("Configura video.input_path o video.cameras (left/right)")
 
     # ------------------------------------------------------------------
@@ -56,7 +70,7 @@ class TennisPipeline:
         vcfg = self.cfg["video"]
         models = self.cfg["models"]
         cameras = self._cameras(vcfg)
-        logger.info("Cámaras: %s", {k: v for k, v in cameras.items()})
+        logger.info("Cámaras: %s", {k: v["video"] for k, v in cameras.items()})
 
         # Construir los detectores UNA vez y reutilizarlos en cada cámara.
         combined = (
@@ -72,17 +86,17 @@ class TennisPipeline:
             ball_det = build_ball_detector(models["ball"])
             player_det = build_player_detector(models["player"])
 
-        # ---- PISTA (opcional) ----
+        # ---- PISTA (opcional, una calibración POR cámara) ----
         ccfg = models.get("court", {})
         court_enabled = ccfg.get("enabled", False)
-        court_det = build_court_detector(ccfg) if court_enabled else None
         if not court_enabled:
             logger.warning("Detección de PISTA desactivada (court.enabled=false). "
                            "Se generará informe de detecciones en píxeles.")
 
         cm = self.cfg["court_model"]
         cameras_data: Dict[str, dict] = {}
-        for label, path in cameras.items():
+        for label, cam in cameras.items():
+            path = cam["video"]
             with StepTimer(logger, f"[{label}] detección pelota + jugadores"):
                 ball_obs, players_by_frame, fps, meta = self._detect_camera(
                     path, models, combined, det, ball_det, player_det)
@@ -91,6 +105,13 @@ class TennisPipeline:
             hc = None
             if court_enabled:
                 with StepTimer(logger, f"[{label}] pista + proyección a metros"):
+                    # Calibración propia de esta cámara
+                    ccfg_cam = dict(ccfg)
+                    if cam.get("keypoints_json"):
+                        ccfg_cam["keypoints_json"] = cam["keypoints_json"]
+                    court_det = build_court_detector(ccfg_cam)
+                    logger.info("[%s] pista desde %s", label,
+                                ccfg_cam.get("keypoints_json", ccfg_cam.get("weights")))
                     cframe = self._detect_court_once(court_det, path)
                     hc = CourtModel(length=cm["length"],
                                     singles_width=cm.get("width", 8.23),
@@ -195,13 +216,17 @@ class TennisPipeline:
         return bounces, shots, rallies, player_sides
 
     def _build_metric_report(self, usable, stats, match_id) -> dict:
-        """Informe métrico (botes/golpes/rallies/estadísticas) por fuente."""
+        """Informe métrico (botes/golpes/rallies/estadísticas) por fuente, y si
+        hay 2+ cámaras, un informe de PARTIDO fusionado."""
         sources = {}
+        analyzed = {}
         for label, data in usable.items():
             hc, fps = data["hc"], data["fps"]
             bounces, shots, rallies, player_sides = self._analyze(
                 data["ball"], data["players"], hc, fps)
             data["bounces"] = bounces      # para dibujarlos en el vídeo
+            analyzed[label] = {"bounces": bounces, "shots": shots,
+                               "players": data["players"], "fps": fps}
             player_ids = [player_sides["left"], player_sides["right"]]
             src_stats = StatisticsBuilder(hc, fps, match_id=match_id)
             sources[label] = src_stats.build(player_ids, shots, bounces, rallies,
@@ -210,10 +235,57 @@ class TennisPipeline:
             rep = next(iter(sources.values()))
             rep["court_available"] = True
             return rep
-        from datetime import datetime, timezone
-        return {"match_id": match_id, "court_available": True,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "sources": sources}
+        # Dos o más cámaras -> fusionar en un único informe de partido.
+        report = self._fuse(analyzed, match_id)
+        report["by_camera"] = sources
+        return report
+
+    def _fuse(self, analyzed: dict, match_id: str) -> dict:
+        """Fusiona las cámaras (mismo sistema métrico, sincronizadas) en un
+        único informe de partido: cada cámara aporta los golpes de SU jugador;
+        botes y golpes se combinan por frame y se re-segmentan los rallies."""
+        from dataclasses import replace
+        from collections import defaultdict
+        from .analysis.court import LEFT_PLAYER_ID, RIGHT_PLAYER_ID
+
+        labels = list(analyzed.keys())
+
+        def pid_for(label, i):
+            lo = label.lower()
+            if "left" in lo or "izq" in lo:
+                return LEFT_PLAYER_ID
+            if "right" in lo or "der" in lo:
+                return RIGHT_PLAYER_ID
+            return LEFT_PLAYER_ID if i == 0 else RIGHT_PLAYER_ID
+
+        all_shots, all_bounces = [], []
+        merged_players = defaultdict(list)
+        fps = next(iter(analyzed.values()))["fps"]
+        for i, (label, a) in enumerate(analyzed.items()):
+            pid = pid_for(label, i)
+            all_shots.extend(replace(s, player_id=pid) for s in a["shots"])
+            all_bounces.extend(a["bounces"])
+            for fr, pls in a["players"].items():
+                merged_players[fr].extend(pls)
+
+        all_shots.sort(key=lambda s: s.frame)
+        all_bounces.sort(key=lambda b: b.frame)
+
+        court = CourtModel(length=self.cfg["court_model"]["length"],
+                           singles_width=self.cfg["court_model"].get("width", 8.23),
+                           doubles_width=self.cfg["court_model"].get("doubles_width", 10.97))
+        rally_gap = int(round(self.cfg["analysis"]["rally"].get("max_gap_s", 2.5) * fps))
+        rallies = RallySegmenter(court, rally_gap).segment(all_shots, all_bounces)
+        player_sides = {"left": LEFT_PLAYER_ID, "right": RIGHT_PLAYER_ID}
+
+        stats = StatisticsBuilder(court, fps, match_id=match_id)
+        report = stats.build([LEFT_PLAYER_ID, RIGHT_PLAYER_ID], all_shots, all_bounces,
+                             rallies, merged_players, player_sides=player_sides)
+        report["court_available"] = True
+        report["fused_from"] = labels
+        logger.info("Partido fusionado: %d golpes, %d botes, %d rallies (cámaras %s)",
+                    len(all_shots), len(all_bounces), len(rallies), labels)
+        return report
 
     # ------------------------------------------------------------------
     def _detect_camera(self, path, models, combined, det, ball_det, player_det):

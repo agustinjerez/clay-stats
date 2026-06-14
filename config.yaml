@@ -3,12 +3,17 @@
 # ============================================================
 
 video:
-  # Análisis de UN solo vídeo.
-  input_path: "data/pano_260604_corto_saturado_1080.mp4"
-  # (opcional) dos cámaras sincronizadas: usa 'cameras' en vez de input_path
-  # cameras:
-  #   left:  "data/cam1_260604_corto_saturado_1080.mp4"
-  #   right: "data/cam2_260604_corto_saturado_1080.mp4"
+  # --- DOS cámaras (cada una su mitad de pista, con SU calibración) ---
+  cameras:
+    left:
+      video: "data/cam1_260604_corto_saturado_1080.mp4"
+      keypoints_json: "weights/court_keypoints_cam1.json"
+    right:
+      video: "data/cam2_260604_corto_saturado_1080.mp4"
+      keypoints_json: "weights/court_keypoints_cam2.json"
+
+  # --- UN solo vídeo (alternativa): comenta 'cameras' y usa input_path ---
+  # input_path: "data/pano_260604_corto_saturado_1080.mp4"
 
   # Procesar 1 de cada N frames (1 = todos). Con SAM3 deja 1 (frames consecutivos).
   frame_stride: 1

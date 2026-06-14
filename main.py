@@ -74,10 +74,15 @@ def main(argv=None):
             print(f"  Jugador {pid}: {pd['total_shots']} golpes, "
                   f"rally máx {pd['longest_rally_shots']}, {pd['errors']} errores")
 
-    if "summary" in report:                       # informe métrico (un vídeo)
-        print("\n===== ESTADÍSTICAS =====")
+    if "summary" in report:                       # informe métrico
+        if report.get("fused_from"):
+            print("\n===== PARTIDO (fusionado %s) =====" % report["fused_from"])
+        else:
+            print("\n===== ESTADÍSTICAS =====")
         print_metrics(report)
-    elif "sources" in report:                     # métrico multi-fuente
+        for label, rep in report.get("by_camera", {}).items():
+            print(f"\n-- cámara {label} --"); print_metrics(rep)
+    elif "sources" in report:                     # métrico multi-fuente (sin fusión)
         print("\n===== ESTADÍSTICAS POR FUENTE =====")
         for label, rep in report["sources"].items():
             print(f"-- {label} --"); print_metrics(rep)
