@@ -7,8 +7,10 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# Pesos de modelos (grandes)
-weights/
+# Pesos de modelos (grandes) -> se ignora todo dentro de weights/ EXCEPTO los
+# .json (calibración de pista, que sí se versiona).
+weights/*
+!weights/*.json
 *.pt
 *.pth
 *.onnx

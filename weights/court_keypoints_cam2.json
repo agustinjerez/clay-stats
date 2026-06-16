@@ -1,0 +1,83 @@
+{
+  "source_image": "imgz/cam2_frame.jpg",
+  "width": 1920,
+  "height": 1080,
+  "keypoint_names": [
+    "left_baseline_top_doubles",
+    "left_baseline_top_singles",
+    "left_baseline_bottom_singles",
+    "left_baseline_bottom_doubles",
+    "left_service_top_singles",
+    "left_service_T",
+    "left_service_bottom_singles",
+    "right_service_top_singles",
+    "right_service_T",
+    "right_service_bottom_singles",
+    "right_baseline_top_doubles",
+    "right_baseline_top_singles",
+    "right_baseline_bottom_singles",
+    "right_baseline_bottom_doubles",
+    "net_top_doubles",
+    "net_top_singles",
+    "net_center",
+    "net_bottom_singles",
+    "net_bottom_doubles"
+  ],
+  "keypoints": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+      924.0,
+      365.0
+    ],
+    [
+      981.0,
+      372.0
+    ],
+    [
+      1598.0,
+      463.0
+    ],
+    [
+      1774.0,
+      489.0
+    ],
+    [
+      625.0,
+      396.0
+    ],
+    [
+      845.0,
+      447.0
+    ],
+    [
+      1240.0,
+      542.0
+    ],
+    [
+      4.0,
+      410.0
+    ],
+    [
+      4.0,
+      433.0
+    ],
+    [
+      4.0,
+      532.0
+    ],
+    [
+      3.0,
+      811.0
+    ],
+    [
+      14.0,
+      1066.0
+    ]
+  ]
+}
