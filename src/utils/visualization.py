@@ -68,11 +68,8 @@ def draw_shot_markers(frame, shots, ball_by_frame, frame_idx, hold):
         b = ball_by_frame.get(s.frame)
         if b is not None and b.x is not None:
             c = (int(b.x), int(b.y))
-            label = f"GOLPE J{s.player_id}"
-            if s.ball_speed_kmh:
-                label += f" {s.ball_speed_kmh:.0f} km/h"
             cv2.circle(frame, c, 16, (0, 200, 255), 2, cv2.LINE_AA)
-            cv2.putText(frame, label, (c[0] + 18, c[1]),
+            cv2.putText(frame, f"GOLPE J{s.player_id}", (c[0] + 18, c[1]),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2, cv2.LINE_AA)
     return frame
 
