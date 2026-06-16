@@ -28,7 +28,7 @@ print(f'guardados {saved} frames') """
 import cv2, os
 
 #video_path = 'input_videos/pano_parque_corto_720.mp4'
-video_path = '/Users/agustin_jerez/MasterIA/TFM/tennis_project_claude/data/pano_last_1080_3.mp4'
+video_path = '/Users/agustin_jerez/MasterIA/TFM/tennis_project_claude/data/pano_long.mp4'
 out_dir = '/Users/agustin_jerez/MasterIA/TFM/tennis_project_claude/tools/imgz' #tennis_court_detector_git/data/images_parque_corto
 os.makedirs(out_dir, exist_ok=True)
 
