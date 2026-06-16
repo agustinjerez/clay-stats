@@ -11,6 +11,35 @@ from ..utils.geometry import smooth_series
 from .court import CourtModel
 
 
+def collapse_consecutive_bounces(bounces, max_frames):
+    """Descarta botes MUY SEGUIDOS (dos o más botes dentro de `max_frames`): el
+    juego está parado (la pelota botó dos veces). Conserva el PRIMER bote de cada
+    grupo y descarta el resto.
+
+    Devuelve (botes_filtrados, frames_doble_bote). Cada frame de doble bote marca
+    un punto muerto -> separador de rally.
+    """
+    if not bounces:
+        return [], []
+    bs = sorted(bounces, key=lambda b: b.frame)
+    kept = [bs[0]]
+    db_frames = []
+    prev = bs[0].frame
+    cluster_start = bs[0].frame
+    cluster_n = 1
+    for b in bs[1:]:
+        if b.frame - prev <= max_frames:        # mismo grupo -> descartar
+            cluster_n += 1
+            if cluster_n == 2:
+                db_frames.append(cluster_start)  # el grupo es un doble bote
+        else:                                   # grupo nuevo -> conservar
+            kept.append(b)
+            cluster_start = b.frame
+            cluster_n = 1
+        prev = b.frame
+    return kept, db_frames
+
+
 class BounceDetector:
     """
     Un bote se detecta como un máximo local de la coordenada Y en imagen

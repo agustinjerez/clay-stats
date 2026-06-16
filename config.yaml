@@ -161,6 +161,9 @@ analysis:
   rally:
     # Fin de rally: hueco entre golpes mayor a este tiempo (segundos).
     max_gap_s: 4.0
+    # Dos o más botes dentro de este tiempo = doble bote (juego parado):
+    # se descartan los botes extra y se separa el rally.
+    double_bounce_max_s: 1.0
   error:
     # Bote fuera de los límites de pista -> error del último golpeador
     out_margin_m: 0.10

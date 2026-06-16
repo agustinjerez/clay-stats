@@ -27,16 +27,20 @@ class RallySegmenter:
         self.court = court
         self.max_gap = max_gap_frames
 
-    def segment(self, shots: List[Shot], bounces: List[Bounce]) -> List[Rally]:
+    def segment(self, shots: List[Shot], bounces: List[Bounce],
+                double_bounce_frames: List[int] = None) -> List[Rally]:
         if not shots:
             return []
+        db = sorted(double_bounce_frames or [])
 
         rallies: List[Rally] = []
         current: List[Shot] = [shots[0]]
 
         for prev, nxt in zip(shots, shots[1:]):
             gap = nxt.frame - prev.frame
-            if gap > self.max_gap:
+            # Fin de rally: hueco largo entre golpes O un doble bote (juego parado)
+            stopped = any(prev.frame < f <= nxt.frame for f in db)
+            if gap > self.max_gap or stopped:
                 rallies.append(self._close(current, bounces))
                 current = [nxt]
             else:

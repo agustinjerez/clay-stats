@@ -284,6 +284,10 @@ class TennisPipeline:
             hc, min_prominence_px=acfg["bounce"]["min_prominence_px"],
             smooth_window=acfg["bounce"]["smooth_window"],
             out_margin_m=acfg["error"]["out_margin_m"]).detect(ball_obs)
+        # Descartar botes muy seguidos (doble bote = juego parado -> nuevo rally)
+        from .analysis import collapse_consecutive_bounces
+        db_frames = int(round(acfg["rally"].get("double_bounce_max_s", 1.0) * fps))
+        bounces, db_marks = collapse_consecutive_bounces(bounces, db_frames)
         shot_det = ShotDetector(
             hc, fps,
             min_frames_between_shots=acfg["shot"]["min_frames_between_shots"],
@@ -294,8 +298,9 @@ class TennisPipeline:
         player_sides = ShotDetector.player_sides(players_by_frame, hc)
         shots = shot_det.detect(ball_obs, players_by_frame, player_sides)
         rally_gap = int(round(acfg["rally"].get("max_gap_s", 2.5) * fps))
-        rallies = RallySegmenter(hc, rally_gap).segment(shots, bounces)
-        logger.info("Botes=%d, golpes=%d, rallies=%d", len(bounces), len(shots), len(rallies))
+        rallies = RallySegmenter(hc, rally_gap).segment(shots, bounces, db_marks)
+        logger.info("Botes=%d (dobles=%d), golpes=%d, rallies=%d",
+                    len(bounces), len(db_marks), len(shots), len(rallies))
         return bounces, shots, rallies, player_sides
 
     def _build_metric_report(self, usable, stats, match_id) -> dict:
@@ -356,12 +361,15 @@ class TennisPipeline:
 
         all_shots.sort(key=lambda s: s.frame)
         all_bounces.sort(key=lambda b: b.frame)
+        from .analysis import collapse_consecutive_bounces
+        db_frames = int(round(self.cfg["analysis"]["rally"].get("double_bounce_max_s", 1.0) * fps))
+        all_bounces, db_marks = collapse_consecutive_bounces(all_bounces, db_frames)
 
         court = CourtModel(length=self.cfg["court_model"]["length"],
                            singles_width=self.cfg["court_model"].get("width", 8.23),
                            doubles_width=self.cfg["court_model"].get("doubles_width", 10.97))
         rally_gap = int(round(self.cfg["analysis"]["rally"].get("max_gap_s", 2.5) * fps))
-        rallies = RallySegmenter(court, rally_gap).segment(all_shots, all_bounces)
+        rallies = RallySegmenter(court, rally_gap).segment(all_shots, all_bounces, db_marks)
         player_sides = {"left": LEFT_PLAYER_ID, "right": RIGHT_PLAYER_ID}
 
         stats = StatisticsBuilder(court, fps, match_id=match_id)
