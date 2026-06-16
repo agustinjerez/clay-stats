@@ -134,9 +134,8 @@ def build_minimap(court_model, mm_len_px: int = 320, margin: int = 14):
     court_bottom = margin + court_h
     h = int(court_bottom + counter_h)
 
-    # Eje vertical INVERTIDO (W - cx) para que coincida con la vista del vídeo.
     def to_mm(cx, cy):
-        return (int(margin + cy * scale), int(margin + (W - cx) * scale))
+        return (int(margin + cy * scale), int(margin + cx * scale))
 
     base = np.full((h, w, 3), 30, np.uint8)            # fondo oscuro
     col = (180, 180, 180)
