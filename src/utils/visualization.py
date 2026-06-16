@@ -128,27 +128,27 @@ def build_minimap(court_model, mm_len_px: int = 320, margin: int = 14):
     W = court_model.width
     tram = getattr(court_model, "tramline", 0.0)
     scale = mm_len_px / L
+    court_h = int(W * scale)
+    counter_h = 40                                     # banda de contadores DEBAJO
     w = int(mm_len_px + 2 * margin)
-    h = int(W * scale + 2 * margin)
+    court_bottom = margin + court_h
+    h = int(court_bottom + counter_h)
 
+    # Eje vertical INVERTIDO (W - cx) para que coincida con la vista del vídeo.
     def to_mm(cx, cy):
-        return (int(margin + cy * scale), int(margin + cx * scale))
+        return (int(margin + cy * scale), int(margin + (W - cx) * scale))
 
     base = np.full((h, w, 3), 30, np.uint8)            # fondo oscuro
     col = (180, 180, 180)
-    # marco de dobles
-    cv2.rectangle(base, to_mm(0, 0), to_mm(W, L), col, 1)
-    # líneas de individuales
-    cv2.line(base, to_mm(tram, 0), to_mm(tram, L), col, 1)
+    cv2.rectangle(base, to_mm(0, 0), to_mm(W, L), col, 1)             # marco de dobles
+    cv2.line(base, to_mm(tram, 0), to_mm(tram, L), col, 1)           # individuales
     cv2.line(base, to_mm(W - tram, 0), to_mm(W - tram, L), col, 1)
-    # red
-    cv2.line(base, to_mm(0, L / 2), to_mm(W, L / 2), (255, 255, 255), 1)
-    # líneas de saque
+    cv2.line(base, to_mm(0, L / 2), to_mm(W, L / 2), (255, 255, 255), 1)  # red
     cv2.line(base, to_mm(tram, L / 2 - 6.40), to_mm(W - tram, L / 2 - 6.40), col, 1)
     cv2.line(base, to_mm(tram, L / 2 + 6.40), to_mm(W - tram, L / 2 + 6.40), col, 1)
-    # central de saque
     cv2.line(base, to_mm(W / 2, L / 2 - 6.40), to_mm(W / 2, L / 2 + 6.40), col, 1)
-    return {"base": base, "to_mm": to_mm, "w": w, "h": h}
+    return {"base": base, "to_mm": to_mm, "w": w, "h": h,
+            "court_bottom": court_bottom}
 
 
 def draw_minimap(frame, mm, bounces, frame_idx, shots=None):
@@ -156,6 +156,7 @@ def draw_minimap(frame, mm, bounces, frame_idx, shots=None):
     contador de botes y golpes hasta el frame actual."""
     canvas = mm["base"].copy()
     h_mm, w_mm = canvas.shape[:2]
+    cbot = mm["court_bottom"]                  # límite inferior de la PISTA
     n = 0
     for b in bounces:
         if b.frame > frame_idx:
@@ -163,19 +164,19 @@ def draw_minimap(frame, mm, bounces, frame_idx, shots=None):
         if b.court_x is None or not np.isfinite(b.court_x) or not np.isfinite(b.court_y):
             continue
         x, y = mm["to_mm"](b.court_x, b.court_y)
-        x = int(min(max(x, 2), w_mm - 3))      # recortar al borde del mini-mapa
-        y = int(min(max(y, 2), h_mm - 3))
+        x = int(min(max(x, 2), w_mm - 3))      # acotar al área de pista
+        y = int(min(max(y, 2), cbot - 2))
         col = C_BOUNCE_IN if b.inside else C_BOUNCE_OUT
         cv2.circle(canvas, (x, y), 4, col, -1, cv2.LINE_AA)
         n += 1
     past = [s for s in (shots or []) if s.frame <= frame_idx]
     j1 = sum(1 for s in past if s.player_id == 1)
     j2 = sum(1 for s in past if s.player_id == 2)
-    # Contadores (banda inferior, 2 líneas)
-    cv2.rectangle(canvas, (0, h_mm - 38), (w_mm, h_mm), (0, 0, 0), -1)
-    cv2.putText(canvas, f"Botes: {n}", (6, h_mm - 23),
+    # Contadores en su banda DEBAJO de la pista (no tapan los botes)
+    cv2.rectangle(canvas, (0, cbot), (w_mm, h_mm), (0, 0, 0), -1)
+    cv2.putText(canvas, f"Botes: {n}", (6, cbot + 15),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, C_BOUNCE_IN, 1, cv2.LINE_AA)
-    cv2.putText(canvas, f"Golpes: {len(past)}  (J1:{j1}  J2:{j2})", (6, h_mm - 6),
+    cv2.putText(canvas, f"Golpes: {len(past)}  (J1:{j1}  J2:{j2})", (6, cbot + 32),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1, cv2.LINE_AA)
     H, W = frame.shape[:2]
     x0, y0 = W - mm["w"] - 10, 10
