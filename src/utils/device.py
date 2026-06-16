@@ -43,3 +43,33 @@ def resolve_device(requested: str | None = "auto") -> str:
         return "cpu"
 
     return "cpu"
+
+
+_cuda_ready = False
+
+
+def enable_cuda_optimizations() -> bool:
+    """Activa los ajustes de rendimiento de NVIDIA (una sola vez):
+      - cudnn.benchmark: autotune de convoluciones (tamaños de entrada fijos).
+      - TF32 en matmul/cudnn: mucho más rápido en Ampere+ con calidad equivalente.
+    Devuelve True si hay CUDA. fp16 lo gestiona cada detector con half=True.
+    """
+    global _cuda_ready
+    if _cuda_ready:
+        return True
+    try:
+        import torch
+    except ImportError:
+        return False
+    if not torch.cuda.is_available():
+        return False
+    torch.backends.cudnn.benchmark = True
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    except Exception:
+        pass
+    name = torch.cuda.get_device_name(0)
+    logger.info("CUDA activado: %s | cudnn.benchmark=on, TF32=on, fp16 disponible", name)
+    _cuda_ready = True
+    return True

@@ -26,6 +26,7 @@ from .datatypes import BallObservation, CourtFrame, PlayerObservation
 from .models import build_ball_detector, build_court_detector, build_player_detector
 from .utils.video import VideoReader
 from .utils.logging_utils import get_logger, StepTimer
+from .utils.device import enable_cuda_optimizations
 
 logger = get_logger(__name__)
 
@@ -33,6 +34,7 @@ logger = get_logger(__name__)
 class TennisPipeline:
     def __init__(self, cfg: dict):
         self.cfg = cfg
+        enable_cuda_optimizations()        # NVIDIA: cudnn.benchmark + TF32 (no-op sin CUDA)
         cm = cfg["court_model"]
         self.court_model = CourtModel(
             length=cm["length"],
