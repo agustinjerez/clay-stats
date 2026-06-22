@@ -40,12 +40,15 @@ class FrameData:
 # ======================================================================
 #  Detección con SAM3
 # ======================================================================
-def detect_sam3(models_cfg: dict, video: str, imgsz: int = None) -> List[FrameData]:
+def detect_sam3(models_cfg: dict, video: str, imgsz: int = None,
+                ball_prompt: str = None) -> List[FrameData]:
     from src.models import build_ball_detector, build_player_detector
 
     bcfg = dict(models_cfg["ball"]); bcfg["backend"] = "sam3"
     if imgsz:
         bcfg["imgsz"] = imgsz
+    if ball_prompt:
+        bcfg["prompt"] = ball_prompt
     ball_obs = build_ball_detector(bcfg).detect_video(video)
     n = len(ball_obs)
     frames = [FrameData() for _ in range(n)]
@@ -67,10 +70,26 @@ def detect_sam3(models_cfg: dict, video: str, imgsz: int = None) -> List[FrameDa
 #  Detección con YOLO (una pasada: pelota + personas)
 # ======================================================================
 def detect_yolo(weights: str, video: str, ball_cls: int, person_cls: int,
-                conf: float, imgsz: int, device: str) -> List[FrameData]:
+                conf: float, imgsz: int, device: str,
+                ball_name: str = "tennis ball", person_name: str = "person") -> List[FrameData]:
     from ultralytics import YOLO
 
     model = YOLO(weights)
+    # Modelos open-vocab (YOLO-World/YOLOE): aceptan clases por TEXTO, así que se
+    # puede pedir "tennis ball". Con un modelo COCO normal no existe esa clase y
+    # se cae a la clase numérica (32 = 'sports ball').
+    open_vocab = hasattr(model, "set_classes")
+    if open_vocab:
+        try:
+            model.set_classes([ball_name, person_name])
+            ball_cls, person_cls = 0, 1                 # índices según la lista dada
+            print(f"  YOLO open-vocab -> clases por texto: ['{ball_name}', '{person_name}']")
+        except Exception as e:                          # noqa: BLE001
+            print(f"  (aviso: set_classes falló, uso clases COCO: {e})")
+            open_vocab = False
+    if not open_vocab:
+        print(f"  YOLO COCO -> pelota=clase {ball_cls}, persona=clase {person_cls} "
+              f"(para 'tennis ball' usa un modelo YOLO-World)")
     results = model.predict(source=video, stream=True, conf=conf,
                             classes=[ball_cls, person_cls], imgsz=imgsz,
                             device=device, verbose=False)
@@ -122,9 +141,13 @@ def build_court_roi(video: str, court_cfg: dict):
 
 
 def apply_roi(frames: List[FrameData], roi, margin_player_frac: float,
-              margin_ball_frac: float) -> List[FrameData]:
-    """Filtra pelota (centro) y jugadores (pies) por el polígono de pista."""
-    if roi is None:
+              margin_ball_frac: float, do_ball: bool, do_player: bool) -> List[FrameData]:
+    """Filtra por el polígono de pista. do_ball/do_player activan cada filtro.
+
+    Por defecto solo jugadores: la pelota se cuenta en bruto (cuadra con el log
+    del detector). El filtro de pelota descartaría lobs/saques fuera del polígono.
+    """
+    if roi is None or (not do_ball and not do_player):
         return frames
     import cv2
     hull, bbox_h = roi
@@ -134,10 +157,15 @@ def apply_roi(frames: List[FrameData], roi, margin_player_frac: float,
     for fd in frames:
         g = FrameData()
         if fd.ball is not None:
-            d = cv2.pointPolygonTest(hull, fd.ball, True)
-            g.ball = fd.ball if d >= -mb else None
-        g.players = [p for p in fd.players
-                     if cv2.pointPolygonTest(hull, (p[0], p[1]), True) >= -mp]
+            if do_ball:
+                g.ball = fd.ball if cv2.pointPolygonTest(hull, fd.ball, True) >= -mb else None
+            else:
+                g.ball = fd.ball
+        if do_player:
+            g.players = [p for p in fd.players
+                         if cv2.pointPolygonTest(hull, (p[0], p[1]), True) >= -mp]
+        else:
+            g.players = list(fd.players)
         out.append(g)
     return out
 
@@ -157,9 +185,9 @@ def coverage(frames: List[FrameData], target: int) -> dict:
 
 
 def print_table(name: str, rows: List[Tuple[int, dict]], target: int,
-                roi_on: bool, times: dict):
+                roi_desc: str, times: dict):
     """rows = [(imgsz, coverage_dict), ...]."""
-    print(f"\n=== {name}  (filtro de pista: {'sí' if roi_on else 'no'}) ===")
+    print(f"\n=== {name}  (filtro de pista -> {roi_desc}) ===")
     head = (f"{'imgsz':>6} | {'frames':>6} | {'pelota':>13} | {'>=1 jug':>13} | "
             f"{'>='+str(target)+' jug':>13} | {'=='+str(target)+' jug':>13} | {'tiempo s':>8}")
     print(head); print("-" * len(head))
@@ -176,6 +204,20 @@ def print_table(name: str, rows: List[Tuple[int, dict]], target: int,
 # ======================================================================
 #  Main
 # ======================================================================
+def _snap_list(imgszs: List[int], stride: int) -> List[int]:
+    """Redondea cada imgsz al múltiplo de `stride` más cercano (SAM3=14, YOLO=32),
+    evita el aviso de Ultralytics y deja constancia del tamaño real usado."""
+    out = []
+    for v in imgszs:
+        s = max(stride, int(round(v / stride)) * stride)
+        if s != v:
+            print(f"  imgsz {v} -> {s} (múltiplo de {stride})")
+        if s not in out:
+            out.append(s)
+    return out
+
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Cobertura de detección (pelota / 2 jugadores)")
     ap.add_argument("--config", default="config.yaml")
@@ -185,9 +227,19 @@ def main(argv=None):
     ap.add_argument("--imgszs", default="640,960,1280",
                     help="resoluciones de inferencia a comparar (separadas por comas)")
     ap.add_argument("--players", type=int, default=2, help="nº de jugadores objetivo")
-    ap.add_argument("--no-roi", action="store_true", help="desactiva el filtro de pista")
+    ap.add_argument("--no-roi", action="store_true",
+                    help="desactiva el filtro de pista para los JUGADORES")
+    ap.add_argument("--ball-roi", action="store_true",
+                    help="aplica también el filtro de pista a la PELOTA "
+                         "(por defecto no, para que cuadre con el log del detector)")
+    ap.add_argument("--sam-ball-prompt", default="small yellow tennis ball",
+                    help="prompt de texto de la pelota para SAM3")
     ap.add_argument("--yolo-weights", default="weights/yolov8x.pt")
-    ap.add_argument("--yolo-ball-class", type=int, default=32, help="COCO: 32=sports ball")
+    ap.add_argument("--yolo-ball-name", default="tennis ball",
+                    help="clase de pelota por TEXTO (modelos YOLO-World/open-vocab)")
+    ap.add_argument("--yolo-person-name", default="person")
+    ap.add_argument("--yolo-ball-class", type=int, default=32,
+                    help="clase numérica de pelota si el modelo es COCO (32=sports ball)")
     ap.add_argument("--yolo-person-class", type=int, default=0, help="COCO: 0=person")
     ap.add_argument("--conf", type=float, default=0.25, help="confianza mínima (YOLO)")
     ap.add_argument("--device", default="auto")
@@ -206,38 +258,41 @@ def main(argv=None):
     if not os.path.exists(video):
         raise SystemExit(f"No existe el vídeo: {video}")
     device = resolve_device(args.device)
-    roi_on = not args.no_roi
-    print(f"Vídeo: {video} | backend: {args.backend} | filtro de pista: {roi_on}")
+    player_roi = not args.no_roi          # filtro de pista a jugadores (def. sí)
+    ball_roi = args.ball_roi              # filtro de pista a la pelota (def. no)
 
     # Polígono de pista (una vez) para el filtro de zona.
     roi = None
-    if roi_on:
+    if player_roi or ball_roi:
         roi = build_court_roi(video, models_cfg.get("court", {}))
         if roi is None:
-            roi_on = False
+            player_roi = ball_roi = False
     mp_frac = models_cfg.get("player", {}).get("roi", {}).get("margin_frac", 0.4)
     mb_frac = models_cfg.get("ball", {}).get("roi", {}).get("margin_frac", 0.05)
+    roi_desc = f"jugadores: {'sí' if player_roi else 'no'}, pelota: {'sí' if ball_roi else 'no'}"
+    print(f"Vídeo: {video} | backend: {args.backend} | {roi_desc}")
     imgszs = [int(s) for s in args.imgszs.split(",") if s.strip()]
 
     if args.backend in ("sam3", "both"):
         rows, times = [], {}
-        for imgsz in imgszs:
+        for imgsz in _snap_list(imgszs, 14):       # SAM3: múltiplos de 14
             t0 = time.perf_counter()
-            frames = detect_sam3(models_cfg, video, imgsz)
+            frames = detect_sam3(models_cfg, video, imgsz, args.sam_ball_prompt)
             times[imgsz] = time.perf_counter() - t0
-            frames = apply_roi(frames, roi, mp_frac, mb_frac)
+            frames = apply_roi(frames, roi, mp_frac, mb_frac, ball_roi, player_roi)
             rows.append((imgsz, coverage(frames, args.players)))
-        print_table("SAM3", rows, args.players, roi_on, times)
+        print_table("SAM3", rows, args.players, roi_desc, times)
     if args.backend in ("yolo", "both"):
         rows, times = [], {}
-        for imgsz in imgszs:
+        for imgsz in _snap_list(imgszs, 32):       # YOLO: múltiplos de 32
             t0 = time.perf_counter()
             frames = detect_yolo(args.yolo_weights, video, args.yolo_ball_class,
-                                 args.yolo_person_class, args.conf, imgsz, device)
+                                 args.yolo_person_class, args.conf, imgsz, device,
+                                 args.yolo_ball_name, args.yolo_person_name)
             times[imgsz] = time.perf_counter() - t0
-            frames = apply_roi(frames, roi, mp_frac, mb_frac)
+            frames = apply_roi(frames, roi, mp_frac, mb_frac, ball_roi, player_roi)
             rows.append((imgsz, coverage(frames, args.players)))
-        print_table("YOLO", rows, args.players, roi_on, times)
+        print_table("YOLO", rows, args.players, roi_desc, times)
     return 0
 
 
