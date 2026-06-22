@@ -51,7 +51,7 @@ de bote (cuadrícula 3×3) y % dentro/fuera.
 ## Estructura
 
 ```
-tennis_project_claude/
+tennis_project/
 ├── main.py                  # CLI
 ├── config.yaml              # toda la configuración
 ├── requirements.txt
